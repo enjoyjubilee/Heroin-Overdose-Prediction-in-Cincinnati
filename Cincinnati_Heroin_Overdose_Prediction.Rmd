@@ -1,0 +1,435 @@
+---
+title: "Cincinnati Heroin Overdose Prediction"
+author: "Sutong Jiang"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+    toc: yes
+---
+
+```{r setup, include=FALSE,warning=FALSE,cache=TRUE,message=FALSE}
+# set working directory
+setwd("E:/MUSA507-Ken/Final_Heroine/Data/SHP/ULTIMATE")
+# rmarkdown::render("E:/MUSA507-Ken/Final_Heroine/Files/Output") 
+```
+
+## Introduction
+>"In the next seven days of the heroin epidemic, at least 180 people will overdose and 18 will die. Babies will be born to addicted mothers. Parents will go to jail. Children will end up in foster care. This is normal now."
+
+This is not a prologue in Breaking Bad, but a statement of truth in a documentary story by Enquirer from Cincinnati, *Seven Days of Heroin* [link](https://www.cincinnati.com/pages/interactives/seven-days-of-heroin-epidemic-cincinnati/). This story helped Enquirer won the Pulitzer Prize in 2018. Other than the great stroy-telling techniques, its revealing how the deadly addiction has ravaged families and communities in Cincinnati strikes at the heart of governors and public health practitioners especially.
+
+Under the circumstance that some pain-relieving opioids are legal for prescrption in Ohio, many people got addicted to this kind of pain reliever and then went into heroin. In 2017, the city of Cincinnati, along with its sister city Dayton as well as their shared home state Ohio, in bringing **suits against the "Big Three" pharmaceutical companies**. Other than the top-down measure, bottom-up actions from the public health officials on spreading overdose death preventing medicine and education are essential.   
+
+Therefore I conducted this risk terrain model analysis to better predict the risk of heroin overdose in Cincinnati. Base on this map people from public health can distribute the naloxone more precisely, seek business method on selling naloxone in street pharmacies and thus the saved expense can be applied on prescription survelliance.
+```{r library, include=FALSE,cache=TRUE,warning=FALSE,message=FALSE}
+# Load the libraries
+library(tidyverse)
+library(sf)
+library(Rcpp)
+library(tidyr)
+library(ggplot2)
+library(boot)
+library(MASS)
+library(QuantPsyc)
+library(ModelMetrics)
+library(kableExtra)
+library(ggpubr)
+library(pander)
+library(knitr)
+library(dplyr)
+
+# Set data display rules, map theme, plot theme and color palette
+options(scipen = 999)
+
+mapTheme <- function() {
+  theme(
+    text = element_text(size = 12,face = "italic"),
+    plot.title = element_text(size = 17,face = "bold",colour = "black", hjust = 0),
+    plot.subtitle = element_text(size = 12, face = "italic", colour = "dark grey", hjust = 0),
+    plot.caption = element_text(size = 10, face = "italic", colour = "grey"),
+    panel.background = element_blank(),axis.title = element_blank(),
+    legend.text = element_text(size = 10),
+    panel.border = element_rect(colour = "white", fill=NA, size=1),
+    axis.ticks = element_blank(), 
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text = element_blank(),
+    panel.grid.major =  element_line(colour="white",size = rel(0.5)),
+    panel.grid.minor = element_blank(), 
+    plot.background = element_rect(fill = "white"),
+    plot.margin = unit(c(0,0,0,0), unit = "pt"),
+    legend.position = "right")
+}
+
+graphTheme <- function() {
+  theme(text = element_text(size = 12,face = "italic"),
+        plot.title = element_text(size = 17,face = "bold",colour = "black", hjust = 0),
+        plot.subtitle = element_text(size = 12, face = "italic", colour = "dark grey", hjust = 0),
+        legend.text = element_text(size = 10),
+        panel.border = element_rect(colour = "grey", fill=NA, size=1),
+        plot.background = element_rect(fill = "white"),
+        plot.margin = unit(c(0,0,0,0), "pt"))
+}
+  
+  pallete4_10_colors <- c("#E8DB4C","#E2B645","#DC923E","#D66D37","#D14931","#AF483E","#8D474B","#6B4758","#494665","#274672")
+
+risk <- st_read("train_6.shp")
+risk2 <- risk[,c(3:25,28:34,36:41)]
+```
+## Data
+* **Data Source**  
+Open Data Cincinnati  
+Tigers  
+
+* **Categories of Data**  
+Distance to Incidents  
+Demographic Characteristics  
+
+* **Main Assumption**  
+Naloxone, which is a drug that can keep drug users alive by reversing opioid overdoses, is viewed by many as the cornerstone of the harm-reduction approach to the epidemic. Narcan and Evzio Nasal Spray are the two main medicines.
+Therefore, the number of emergencies where Narcan is administered is a strong predictor of heroin overdose.   
+
+* **Variable Description**
+```{r variable description list, echo=FALSE,cache=TRUE,warning=FALSE,message=FALSE}
+variable_list <- read.csv("variable list.csv",col.names =cbind(c("Type"),c("Name"),c("Meaning")),encoding = "UTF-8")
+variable_table<-kable(variable_list,format='html',caption='Variable List',
+                        align='c',format.args = list(big.mark = ",")) %>%
+kable_styling(latex_options = c("striped", "hold_position"),full_width = )
+variable_table
+```
+  
+* **Training and Test Set**      
+  To better train and test the model, we should make data of the two set as similar as possible. Therefore, it is not wise to separate the data according to time sequence. Also, there may be difference in heroin overdose in summer and winter for activity intensity of people varies in this two seasons. Finally I picked out data in spring and fall of the three years as two datasets, and chose one with more data (Fall: 1754) as training set and the other(Spring: 1227) as test set.   
+
+## Exploratory Analysis  
+At the very begining, let's see the distribution.  
+First, let's plot the variables. The process in R takes like a lifelongtime because there're more than 30000 polygons, so I choose to plot the dependent variable and comment the codes of independent variables. You can run them if you like.
+```{r maps, echo=FALSE,warning=FALSE,cache=TRUE,fig.align="center",fig.height=8,fig.width=12,message=FALSE}
+# Map of dependent variable
+p1 <- ggplot() +
+  geom_sf(data=risk2, aes(fill=risk2$Count_), colour=NA) +
+  labs(title= "Observed Heroin Overdoses",
+       subtitle = "Cincinnati, Ohio",
+       caption = "Data from 2015 to 2017") +  
+  scale_fill_gradientn(colors = pallete4_10_colors,breaks=c(0.1,2),labels=c("Low\nScore","High\nScore"),
+                       name = "Count") +
+  mapTheme()
+
+# # Map of independent varible
+# p2 <- ggplot() +
+#   geom_sf(data=risk2, aes(fill=risk2$DistVer), colour=NA) +
+#   labs(title= "Distance to Vermin and Mice Complaints",
+#        subtitle = "Cincinnati, Ohio",
+#        caption = "Data from local 311 calls") +  
+#   scale_fill_gradientn(colors = pallete4_10_colors,breaks=c(1,10),labels=c("Low\nScore","High\nScore"),
+#                        name = "Distance") +
+#   mapTheme()
+# 
+# p3 <- ggplot() +
+#   geom_sf(data=risk2, aes(fill=risk2$DistSuic), colour=NA) +
+#   labs(title= "Distance to Suicide Attempt",
+#        subtitle = "Cincinnati, Ohio",
+#        caption = "Data from local 911 calls") +  
+#   scale_fill_gradientn(colors = pallete4_10_colors,breaks=c(1,10),labels=c("Low\nScore","High\nScore"),
+#                        name = "Distance") +
+#   mapTheme()
+# 
+# p4 <- ggplot() +
+#   geom_sf(data=risk2, aes(fill=risk2$DistNar), colour=NA) +
+#   labs(title= "Distance to Narcan Adminstered Emergency",
+#        subtitle = "Cincinnati, Ohio",
+#        caption = "Narcan was administered for a heroin overdose") +  
+#   scale_fill_gradientn(colors = pallete4_10_colors,breaks=c(1,10),labels=c("Low\nScore","High\nScore"),
+#                        name = "Distance") +
+#   mapTheme()
+# 
+# p5 <- ggplot() +
+#   geom_sf(data=risk2, aes(fill=risk2$SingelFema), colour=NA) +
+#   labs(title= "Percent of Singel Female Family",
+#        subtitle = "Cincinnati, Ohio",
+#        caption = "Scale: census tract") +  
+#   scale_fill_gradientn(colors = pallete4_10_colors,breaks=c(1,10),labels=c("Low\nScore","High\nScore"),
+#                        name = "Percentage") +
+#   mapTheme()
+# 
+# p6 <- ggplot() +
+#   geom_sf(data=risk2, aes(fill=risk2$BelowPov), colour=NA) +
+#   labs(title= "Percent of Family below Poverty",
+#        subtitle = "Cincinnati, Ohio",
+#        caption = "Scale: census tract") +  
+#   scale_fill_gradientn(colors = pallete4_10_colors,breaks=c(1,10),labels=c("Low\nScore","High\nScore"),
+#                        name = "Percentage") +
+#   mapTheme()
+# 
+# p7 <- ggplot() +
+#   geom_sf(data=risk2, aes(fill=risk2$Unemploy), colour=NA) +
+#   labs(title= "Percent of Unemployed Family",
+#        subtitle = "Cincinnati, Ohio",
+#        caption = "Scale: census tract") +  
+#   scale_fill_gradientn(colors = pallete4_10_colors,breaks=c(1,10),labels=c("Low\nScore","High\nScore"),
+#                        name = "Percentage") +
+#   mapTheme()
+p1
+```
+
+
+Then let's see the distribution of dependent variable and choose the best type of model.  
+```{r histogram of dependent variable, echo=FALSE,cache=FALSE,warning=FALSE,fig.align="center",fig.width=12,fig.height=8,message=FALSE}
+# Histogram
+library(ggplot2)
+g1<-ggplot(risk2, aes(Count_21)) + geom_histogram(binwidth = 1) +
+  labs(title = "Count of overdose incidents",
+       subtitle = "Cincinnati, Ohio")+
+  graphTheme()
+g1
+```
+What is this telling us about ods in cincinnati? In most places there aren't any, but there's a handful with a lot. Heroin overdose is a "rare event".  
+Let's try log transformation.  
+```{r log-transformed, echo=FALSE,cache=FALSE,warning=FALSE,fig.align="center",fig.width=12,fig.height=8,message=FALSE}
+# Histogram
+g2<-ggplot(risk2, aes(log(Count_21+1))) + geom_histogram(binwidth = 1) +
+  labs(title = "Count of overdose incidents",
+       subtitle = "Cincinnati, Ohio")+
+  graphTheme()
+g2
+```
+Well it doesn't work out.We can't use OLS on this data- it violates the assumptions and the fit would not be robust. So we can try a poisson distribution, which is good for explaining rare events.  
+
+## Modeling - Risk Terrain Model
+In this part I'll narrow down the scope of independent variables manually. After running regression on the current dataset, I'll pick out the statistically significant variables, and do the second regression. Then, I'll repeat this process until all the variables are statisticaly significant. The best model will come out after comparison of AIC and MAE.
+```{r regression model 1, cache=TRUE,include=FALSE,warning=FALSE,message=TRUE}
+# Regression 1 with all data
+reg <- glm(Count_ ~ ., family = "poisson", 
+           data= risk2 %>% 
+             as.data.frame %>% 
+             dplyr::select(-geometry,-Count_21))
+
+```
+
+```{r reg1 summary, cache=TRUE,include=TRUE,echo = FALSE,warning=FALSE}
+# Summary table of regression 1
+stargazer::stargazer(reg,type="text",title="Prediction Summary of Model 1",multicolumn = TRUE,align=TRUE, no.space=TRUE, single.row=TRUE, ci=FALSE)
+```
+The AIC is 25671. Let's pick out the statistically significant varibles(on the level equal and less then 10%) and conduct the second regression.
+```{r regression model 2, cache=TRUE,include=FALSE,warning=FALSE,message=TRUE}
+# Regression 2 with selected data 
+risk3 <- risk2%>%
+  dplyr::select(DistAbanC,DistDump,DistNoHeat,DistMice,DistLight,DistCleann,MedIncome,SingleFema,NonFam,BelowPov,
+         Unemploy,DistVer,DistVac,DistNar,DistSuic,Count_)
+reg2 <- glm(Count_ ~ ., family = "poisson", 
+           data= risk3 %>% 
+             as.data.frame %>% 
+             dplyr::select(-geometry))
+
+```
+
+```{r reg2 summary, cache=TRUE,include=TRUE,echo = FALSE,warning=FALSE}
+# Summary table of regression 2
+stargazer::stargazer(reg2,type="text",title="Prediction Summary of Model 2",multicolumn = TRUE,align=TRUE, no.space=TRUE, single.row=TRUE, ci=FALSE)
+```
+The AIC is 25662, not much smaller than regression 1. Then we conduct the third regression following the same rule.
+```{r regression model 3, cache=TRUE,include=FALSE,warning=FALSE,message=TRUE}
+# Regression 3 with selected data
+risk4 <- risk3%>%
+  dplyr::select(DistAbanC,MedIncome,SingleFema,NonFam,BelowPov,Unemploy,DistVer,DistVac,DistNar,DistSuic,Count_)
+reg3 <- glm(Count_ ~ ., family = "poisson", 
+           data= risk4 %>% 
+             as.data.frame %>% 
+             dplyr::select(-geometry))
+
+```
+
+```{r reg3 summary, cache=TRUE,include=TRUE,echo = FALSE,message=FALSE}
+# Summary table of regression 2
+stargazer::stargazer(reg3,type="text",title="Prediction Summary of Model 3",multicolumn = TRUE,align=TRUE, no.space=TRUE, single.row=TRUE, ci=FALSE)
+```
+The AIC is 25667, and is a little bigger than the second model, so there's no use to further pick out significant variables. For now the second model has the smallest AIC of all. Let's compare the MAE.
+
+```{r MAE table, cache=TRUE,include=TRUE,echo = FALSE }
+reg_table<-data.frame(MAE=mae(risk2$Count_,reg$fitted.values))
+reg2_table<-data.frame(MAE=mae(risk3$Count_,reg2$fitted.values))
+reg3_table<-data.frame(MAE=mae(risk4$Count_,reg3$fitted.values))
+
+regresnCom <- rbind(reg_table,reg2_table,reg3_table)
+
+rownames(regresnCom)<-c("Reg1","Reg2","Reg3")
+regresnCom_table<-kable(regresnCom,format='html',caption='Prediction Error of Models',
+                       align='c',format.args = list(big.mark = ",")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),full_width = 15)
+
+regresnCom_table
+```
+The MAE goes up as variables been picked out, and therefore I chose the second model for the smallest AIC and second smallest MAE.The Count_ is data of all time period and Count21_ is data of fall from 2015-2017
+
+## Validation 
+### Out-of-Sample Model
+Let's train the model on training and test set(data in fall and spring of 2015-2017), and compare the mean absolute error of the two models.
+```{r out-of-sample, message=FALSE,echo=FALSE,warning=FALSE,include=TRUE,message=FALSE,cache=TRUE}
+# MAE of regression on training data
+risk5 <- risk2 %>%
+  dplyr::select(DistAbanC,DistDump,DistNoHeat,DistMice,DistLight,DistCleann,MedIncome,SingleFema,NonFam,BelowPov,
+         Unemploy,DistVer,DistVac,DistNar,DistSuic,Count_21)
+reg_train <- glm(Count_21 ~ ., family = "poisson", 
+           data= risk5 %>% 
+             as.data.frame %>% 
+             dplyr::select(-geometry))
+
+reg_trainTable <- data.frame(MAE=mae(risk5$Count_21,reg_train$fitted.values))
+```
+```{r load the test data, message=FALSE,echo=FALSE,warning=FALSE,include=FALSE,message=FALSE,cache=TRUE}
+# MAE of regression on test data
+test<- st_read("test_1.shp")
+risk6 <- test%>%
+  dplyr::select(DistAbanC,DistDump,DistNoHeat,DistMice,DistLight,DistCleann,MedIncome,SingleFema,NonFam,BelowPov,
+         Unemploy,DistVer,DistVac,DistNar,DistSuic,Count_21)
+reg_test <- glm(Count_21 ~ ., family = "poisson", 
+           data= risk6 %>% 
+             as.data.frame %>% 
+             dplyr::select(-geometry))
+```
+```{r out-sample comparison, message=FALSE,echo=FALSE,warning=FALSE,include=TRUE,message=FALSE,cache=TRUE}
+reg_testTable <- data.frame(MAE=mae(test$Count_21,reg_test$fitted.values))
+
+testCom <- rbind(reg_trainTable, reg_testTable)
+rownames(testCom)<-c("Training","Test")
+testCom_table<-kable(testCom,format='html',caption='Validation of model on different time period',
+                       align='c',format.args = list(big.mark = ",")) %>%
+  kable_styling(latex_options = c("striped", "hold_position"),full_width = 15)
+
+testCom_table
+```
+The MAE of models on training and test sets are smaller than that of the in-sample model, so the validation is successful.
+
+## Results
+### Final risk map  
+There are predicted to be clusters of heroin overdose in southern and south-western Cincinnati, which resembles the pattern in observed heroin overdose map.
+```{r risk map,echo=FALSE,message=FALSE,fig.align="center",fig.height=8,fig.width=12,cache=TRUE} 
+p9<-ggplot() +
+  geom_sf(data=risk3, aes(fill=reg2$fitted.values), colour=NA) +
+  labs(title= "Predicted Overdoses",
+       subtitle = "Cincinnati, Ohio") +
+  scale_fill_gradientn(colors = pallete4_10_colors,                                                                                        breaks=c(0.1,2),labels=c("Low\nScore","High\nScore"),
+                       name = "Predicted count") +
+  mapTheme()
+p9
+```
+
+### Error Map  
+Errors loosely distributed around Cincinnati, but the peak locates in the cluster of high-risk area. Further spatial auto-correlation test is required.  
+```{r error map,echo=FALSE,message=FALSE,fig.align="center",fig.height=10,fig.width=12,cache=TRUE} 
+p10<-ggplot() +
+  geom_sf(data=risk3, aes(fill=reg2$fitted.values-risk3$Count_), colour=NA) +
+  labs(title= "Error Map",
+       subtitle = "Cincinnati, Ohio",
+       Caption = "Error is calculated by predicted value minus observed value") +
+  scale_fill_gradientn(colors = pallete4_10_colors,
+                       name = "Error level") +
+  mapTheme()
+p10
+```
+
+### Predictor Weights    
+From the plot we can see that the top three predictors are Distance to Narcan administered emergencies, Distance to suicide attempt and Distance to vermin and rat complaints. 
+```{r predictor weight,echo=FALSE,message=FALSE,fig.align="center",fig.height=8,fig.width=12} 
+library(QuantPsyc)
+standardized <- as.data.frame(lm.beta(reg2))
+standardized$variable <- row.names(standardized)
+colnames(standardized)[1] <- "std_coefficient"
+standardized$absCoef <- abs(standardized$std_coefficient)
+
+p11<- ggplot(standardized, aes(x=reorder(variable,-absCoef), y=absCoef, fill=variable)) + 
+  geom_bar(stat="identity")+
+  labs(title = "Standardized Predictor Weights")+
+  scale_x_discrete(labels=abbreviate)+
+  graphTheme()
+p11
+```
+
+
+### Goodness of Fit
+In order to plot the bar chart of goodness of fit on comparison of kernel density map and risk terrain model, we should write the final regression table and work in arcgis.  
+```{r output csv, message=FALSE,echo=FALSE,warning=FALSE,include=FALSE,message=FALSE}
+risk7<-cbind(risk3,reg2$fitted.values)
+
+write.csv(risk7, "reg2.csv")
+```
+The process in arcgis is as below:  
+
+1. Move your rtmOutput.csv into arcgis.  
+2. Join it to the fishnet shapefile.  
+3. Use polygon to raster to create a raster called fitted. Make sure the cell size is set to the fishnet size.  
+4. Reclassify fitted to run 1-100. Call this raster fitted_rcl.  
+5. Reclassify fitted_rcl into a 5 group raster called fitted_rcl2. My breaks are as follows:  
+   90 to 100 = Class 1 70 to 89 = Class 2 50 to 69 = Class 3 30 to 49 = Class 4 1 to 29 = Class 5  
+6. Use raster to polygon to convert fitted_rcl2 into polygons. Call this fittedGroups.shp  
+7. Spatial join the burglary points to the fittedGroups.shp. Call this fittedgroups_joinPoints.shp.  
+8.Summarize the groups to get count of burglaries by group. In your new .dbf, create a new field called fittedCnt and set it equal to the count of burglaries.  
+  
+Now onto the kernel density comparison.  
+
+9. Run kernel density. You may choose to use the incremental spatial autocorrelation tool to specify the radius. Call this kernel.  
+10. Reclass this to run 1- 100. Call this raster kernel_rcl.  
+11. Reclass again into the same 5 classes you used above, Call this kernel_rcl2. Note that you can pull up your former classifications from the Results tab.  
+12. Use raster to polygon to convert kernel_rcl2 into polygons. Call this kernelGroups.shp  
+13. Spatial join the burglary points to the kernelGroups.shp. Call this kernelGroups_joinPoints.shp.  
+14. Summarize the groups to get count of burglaries by group. In your new .dbf, create a new field called kernelCnt and set it equal to the count of burglaries.  
+  
+Now to make the comparisons.  
+
+15. Join the kernel density summarized dbf with the comparable dbf from the risk terrain model. Join on the category, 1-5, GRIDCODE. Export as countComparisons.txt  
+16. Import countComparisons.txt into R.  
+17. Select out the category field as well as the two fields that describe the count of crimes by both rtm and kernel density.  
+18. Add a field that changes the category field, GRIDCODE into a sting-based field denoting the percentage range of predictions.  
+19. Create new fields that represent the count of crimes by category as a percent of all the crimes.  
+  
+After that we load the data back into R and plot the bar chart.
+
+```{r goodness of fit, echo=FALSE,warning=FALSE,cache=FALSE,fig.align="center",fig.height=8,fig.width=12,message=FALSE}
+countComparisons <- read.csv("countComparisons.csv")
+
+countComparisons <- cbind(
+  countComparisons,
+  data.frame(Category = c("90% - 100%", "70% - 89%", "50% - 69%", "30% - 49%", "1% - 29%")))
+
+library(dplyr)
+library(tidyr)
+countComparisons <- 
+  countComparisons %>% 
+  dplyr::mutate(kernelPct = kernelCnt / sum(kernelCnt),
+                fittedPct = fittedCnt / sum(fittedCnt))
+
+countComparisonsLong <-
+  countComparisons %>% 
+  gather(Variable, Value, fittedPct:kernelPct)
+
+p8<-ggplot(data=countComparisonsLong, aes(Category,Value)) +
+  geom_bar(aes(fill = Variable), position = "dodge", stat="identity") +
+  scale_fill_manual(values = pallete4_10_colors[c(1,6)],
+                    labels=c("Risk Terrain", "Kernel Density")) +
+  labs(x= "Predicted Risk Levels",
+       y="Percent of correctly predicted cases",
+       title= "Goodness of Fit: Risk Terrain vs. Kernel Density hotspot") +
+  graphTheme()
+p8
+```
+For the goodness of fit model at the end, the risk terrain model does better on higher risk areas. It's much better for finding high priority areas for a policy maker predictive approach than kernel density/normal hotspots. So we can take this to people!  
+  
+## Real practice  
+This analysis can help better siting, for emergency service facilities and community service(i.e., Narcotics Anonymous), from the perspective of public health practitioners. What's more, it can help better develop business strategy. Pharmaceutical companies selling Narcan and Evzio sell products to street pharmacies near the high risk area, and the pharmacies like CVS and Walgreen can collaborate with them.
+
+## Further Improvement  
+There are other variables that can be taken into account to raise the goodness of fit:   
+**Variables related to opioid use in Cincinnati**  
+  Opioid prescrption: data can be found on data.gov for all opioid prescription from doctors country-wide(but I don't have access to it from China). Then we can geocode the doctors to Cincinnati with volume of the prescription as the value, and calculate the mean value of nearest three doctors of each grid cell.  
+
+  Needle exchange: needle exchange data indicates the drug use across area. You can search this data from the National Academies Press website.
+
+**Variable related to oxycondone prescription**  
+  In 1995, OxyContin was developed and approved as an extended-release reformulation of oxycodone with the intention that this would decrease the abuse of and dependence on the drug. The marketing strategy was to encourage physicians to prescribe OxyContin 70% of the time, in hopes of reducing the abuse and dependency rates of the drug. Ultimately, the marketing efforts were successful, and the agent became one of the most prescribed opioids in the United States. However it has been proved that this is fake advertising and by the early 2000s, there was an obvious spike in opioid overdoses and deaths, especially related to OxyContin.  
+
+  Prescription of OxyContin can also be a predictor of heroin overdose, and the data processing method is like the prescription of legal opioids.    
+  
+What's more, the **spatial auto-correlation** of residuals can be analysed as further improvement.
+
+
